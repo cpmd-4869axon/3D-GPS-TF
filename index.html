@@ -3,203 +3,202 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sentry Node - 3D GPS Engine</title>
+    <title>Sentry Node - Dual View Hub</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        :root { --neon: #00ff41; --bg: #0a0a0a; }
-        body { margin: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; }
+        :root { --neon: #00ff41; --bg: #050505; }
+        body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; height: 100%; }
         
+        /* Tactical Header */
         #header {
-            position: absolute; top: 0; left: 0; width: 100%; height: 45px;
+            position: absolute; top: 0; left: 0; width: 100%; height: 40px;
             background: rgba(0,0,0,0.9); border-bottom: 2px solid var(--neon);
             display: flex; justify-content: space-between; align-items: center;
-            padding: 0 20px; box-sizing: border-box; z-index: 2000;
+            padding: 0 20px; box-sizing: border-box; z-index: 3000;
         }
-        .status { color: var(--neon); font-size: 14px; text-transform: uppercase; }
+        .stat { color: var(--neon); font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
 
-        /* Layering: Map (Bottom) -> Three.js (Middle) -> UI (Top) */
-        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; opacity: 0.3; }
-        #three-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
-
-        #ui {
-            position: absolute; bottom: 30px; left: 20px; z-index: 1000;
-            background: rgba(0,0,0,0.85); padding: 20px; border-left: 4px solid var(--neon);
-        }
-        #log { color: var(--neon); font-size: 12px; margin-bottom: 15px; }
+        /* Split View Layout */
+        #container { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
         
-        .btns { display: flex; gap: 10px; }
+        /* 2D Map Section */
+        #map-view { flex: 1; position: relative; border-bottom: 1px solid #222; z-index: 1; opacity: 0.7; }
+        
+        /* 3D Visualizer Section */
+        #three-view { flex: 1; position: relative; background: #000; z-index: 2; cursor: crosshair; }
+        #three-canvas { width: 100%; height: 100%; display: block; }
+
+        /* Control UI */
+        #ui {
+            position: absolute; bottom: 20px; left: 20px; z-index: 4000;
+            background: rgba(0,0,0,0.85); padding: 15px; border-left: 3px solid var(--neon);
+        }
+        #log { color: var(--neon); font-size: 11px; margin-bottom: 10px; height: 14px; }
+        .btns { display: flex; gap: 8px; }
         .btn {
             background: transparent; border: 1px solid var(--neon);
-            color: var(--neon); padding: 10px 15px; cursor: pointer;
-            text-transform: uppercase; font-size: 11px;
+            color: var(--neon); padding: 8px 12px; cursor: pointer;
+            text-transform: uppercase; font-size: 10px; font-weight: bold;
         }
         .btn:hover { background: var(--neon); color: black; }
-        .active { background: var(--neon) !important; color: black !important; }
+        .btn.active { background: #ff3e3e; color: white; border-color: #ff3e3e; }
         input[type="file"] { display: none; }
     </style>
 </head>
 <body>
 
 <div id="header">
-    <div class="status">SYSTEM: <span id="sys-state">OFFLINE</span></div>
-    <div class="status">NODES: <span id="count">0</span></div>
+    <div class="stat">SYS_STATE: <span id="sys-status">STANDBY</span></div>
+    <div class="stat">DATA_NODES: <span id="node-count">0</span></div>
 </div>
 
-<div id="map"></div>
-<canvas id="three-canvas"></canvas>
+<div id="container">
+    <div id="map-view"></div>
+    <div id="three-view">
+        <canvas id="three-canvas"></canvas>
+    </div>
+</div>
 
 <div id="ui">
-    <div id="log">> AWAITING INI SIGNAL...</div>
+    <div id="log">> READY_</div>
     <div class="btns">
-        <button id="start" class="btn">ACQUIRE GPS</button>
-        <button id="stop" class="btn">STOP & EXPORT</button>
-        <label class="btn">IMPORT CSV <input type="file" id="csv-in"></label>
-        <button id="reset" class="btn">RESET</button>
+        <button id="start-btn" class="btn">ACQUIRE GPS</button>
+        <button id="stop-btn" class="btn">STOP & EXPORT</button>
+        <label class="btn">IMPORT <input type="file" id="csv-in" multiple></label>
+        <button id="reset-btn" class="btn">RESET</button>
     </div>
 </div>
 
 <script>
     let scene, camera, renderer, map;
-    let dataLog = []; // Stores objects for CSV export
-    let threePoints = []; // THREE.Vector3 array
-    let mapMarkers = [];
-    let polyline3D, polyline2D;
-    let watchID = null;
-    let origin = null;
+    let dataBuffer = [];
+    let threeNodes = [], polyline3D, polyline2D;
+    let watchID = null, origin = null;
 
     function init() {
-        // 1. Leaflet (2D Context)
-        map = L.map('map', { zoomControl: false, attributionControl: false }).setView([0, 0], 2);
+        // 1. Setup 2D Tactical Map
+        map = L.map('map-view', { zoomControl: false, attributionControl: false }).setView([0,0], 2);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
-        polyline2D = L.polyline([], {color: '#00ff41', weight: 2}).addTo(map);
+        polyline2D = L.polyline([], {color: '#00ff41', weight: 1.5, opacity: 0.8}).addTo(map);
 
-        // 2. Three.js (3D Visualization)
+        // 2. Setup 3D Hub
+        const canvas = document.getElementById('three-canvas');
         scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
-        camera.position.set(0, 50, 100);
+        camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 5000);
+        camera.position.set(100, 100, 150);
         camera.lookAt(0,0,0);
 
-        renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('three-canvas'), antialias: true, alpha: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 
-        // Add 3D Grid Hub
-        const grid = new THREE.GridHelper(500, 50, 0x00ff41, 0x111111);
-        grid.material.opacity = 0.2;
+        const grid = new THREE.GridHelper(1000, 40, 0x00ff41, 0x111111);
+        grid.material.opacity = 0.15;
         grid.material.transparent = true;
         scene.add(grid);
 
-        // UI Wire-up
-        document.getElementById('start').onclick = startTracking;
-        document.getElementById('stop').onclick = stopAndExport;
-        document.getElementById('reset').onclick = () => location.reload();
+        // UI Listeners
+        document.getElementById('start-btn').onclick = startCapture;
+        document.getElementById('stop-btn').onclick = stopAndSave;
+        document.getElementById('reset-btn').onclick = () => location.reload();
         document.getElementById('csv-in').onchange = handleImport;
 
-        animate();
+        renderLoop();
     }
 
-    function startTracking() {
-        if (!navigator.geolocation) return alert("Geo not supported");
+    function startCapture() {
+        if (!navigator.geolocation) return updateLog("GEO_ERROR: NOT_SUPPORTED");
         
-        document.getElementById('start').classList.add('active');
-        document.getElementById('sys-state').innerText = "ACTIVE";
+        document.getElementById('start-btn').classList.add('active');
+        document.getElementById('sys-status').innerText = "ACTIVE";
         
-        watchID = navigator.geolocation.watchPosition((pos) => {
-            captureNode(pos.coords.latitude, pos.coords.longitude, pos.coords.altitude || 0);
-        }, (err) => console.error(err), { enableHighAccuracy: true });
+        watchID = navigator.geolocation.watchPosition((p) => {
+            pushNode(p.coords.latitude, p.coords.longitude, p.coords.altitude || 0);
+        }, (e) => updateLog(`SIGNAL_LOST: ${e.message}`), { enableHighAccuracy: true });
     }
 
-    function captureNode(lat, lng, alt) {
-        const timestamp = new Date().toISOString();
-        
-        // Handle initial point to set origin (0,0,0)
+    function pushNode(lat, lng, alt) {
+        const time = new Date().toISOString();
         if (!origin) {
             origin = { lat, lng };
-            map.setView([lat, lng], 18);
-            document.getElementById('log').innerText = `> ORIGIN LOCKED: ${lat}, ${lng}`;
+            map.setView([lat, lng], 17);
+            updateLog(`> LOCK_ACQUIRED: ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
         }
 
-        // Save for CSV
-        dataLog.push({ timestamp, lat, lng, alt });
+        dataBuffer.push({ time, lat, lng, alt });
 
-        // Update 2D Map
-        const latLng = [lat, lng];
-        polyline2D.addLatLng(latLng);
-        L.circleMarker(latLng, { radius: 4, color: '#00ff41', fillOpacity: 1 }).addTo(map);
+        // Update 2D Path
+        polyline2D.addLatLng([lat, lng]);
+        L.circleMarker([lat, lng], { radius: 3, color: '#00ff41', fillOpacity: 1 }).addTo(map);
 
-        // Update 3D Visualizer (Real-time)
-        // Convert Lat/Lng to local meters relative to your origin
+        // Update 3D Path
         const x = (lng - origin.lng) * 111320 * Math.cos(lat * Math.PI / 180);
         const z = (origin.lat - lat) * 111320;
-        
         const vec = new THREE.Vector3(x, alt, z);
-        threePoints.push(vec);
+        threeNodes.push(vec);
 
-        // Draw node in 3D
-        const dotGeo = new THREE.SphereGeometry(1, 8, 8);
-        const dotMat = new THREE.MeshBasicMaterial({ color: 0x00ff41 });
-        const dot = new THREE.Mesh(dotGeo, dotMat);
-        dot.position.copy(vec);
-        scene.add(dot);
+        const nodeGeo = new THREE.SphereGeometry(1.5, 8, 8);
+        const nodeMat = new THREE.MeshBasicMaterial({ color: 0x00ff41 });
+        const nodeMesh = new THREE.Mesh(nodeGeo, nodeMat);
+        nodeMesh.position.copy(vec);
+        scene.add(nodeMesh);
 
-        update3DPolyline();
-        document.getElementById('count').innerText = dataLog.length;
+        draw3DLine();
+        document.getElementById('node-count').innerText = dataBuffer.length;
     }
 
-    function update3DPolyline() {
-        if (threePoints.length < 2) return;
+    function draw3DLine() {
+        if (threeNodes.length < 2) return;
         if (polyline3D) scene.remove(polyline3D);
-        
-        const geo = new THREE.BufferGeometry().setFromPoints(threePoints);
+        const geo = new THREE.BufferGeometry().setFromPoints(threeNodes);
         polyline3D = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x00ff41 }));
         scene.add(polyline3D);
-        
-        // Auto-center camera on latest 3D movement
-        camera.lookAt(threePoints[threePoints.length-1]);
+        camera.lookAt(threeNodes[threeNodes.length-1]);
     }
 
-    function stopAndExport() {
+    function stopAndSave() {
         if (watchID) navigator.geolocation.clearWatch(watchID);
-        document.getElementById('start').classList.remove('active');
-        document.getElementById('sys-state').innerText = "PAUSED";
-        
-        if (dataLog.length === 0) return;
+        document.getElementById('start-btn').classList.remove('active');
+        document.getElementById('sys-status').innerText = "EXPORTING";
 
-        // Generate CSV
-        let csvContent = "data:text/csv;charset=utf-8,Timestamp,Lat,Lng,Alt\n" 
-            + dataLog.map(e => `${e.timestamp},${e.lat},${e.lng},${e.alt}`).join("\n");
+        if (dataBuffer.length === 0) return updateLog("> NO_DATA_TO_EXPORT");
+
+        let csv = "Timestamp,Lat,Lng,Alt\n" + dataBuffer.map(d => `${d.time},${d.lat},${d.lng},${d.alt}`).join("\n");
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `SENTRY_LOG_${Date.now()}.csv`;
+        a.click();
         
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `sentry_data_${Date.now()}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        
-        document.getElementById('log').innerText = "> SENSOR DISCONNECTED. DATA EXPORTED.";
+        updateLog("> DATA_SAVED. LINK_CLOSED.");
     }
 
     async function handleImport(e) {
-        const file = e.target.files[0];
-        const text = await file.text();
-        const rows = text.split('\n').slice(1); // skip header
-        rows.forEach(row => {
-            const [ts, lat, lng, alt] = row.split(',');
-            if (lat && lng) captureNode(parseFloat(lat), parseFloat(lng), parseFloat(alt || 0));
-        });
+        const files = Array.from(e.target.files);
+        for (let file of files) {
+            const text = await file.text();
+            text.split('\n').slice(1).forEach(row => {
+                const parts = row.split(',');
+                if (parts.length >= 3) pushNode(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3] || 0));
+            });
+        }
     }
 
-    function animate() {
-        requestAnimationFrame(animate);
+    function updateLog(m) { document.getElementById('log').innerText = m; }
+
+    function renderLoop() {
+        requestAnimationFrame(renderLoop);
         renderer.render(scene, camera);
     }
 
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
+    window.onresize = () => {
+        const canvas = document.getElementById('three-canvas');
+        camera.aspect = canvas.clientWidth / canvas.clientHeight;
         camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    };
 
     init();
 </script>
