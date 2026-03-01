@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SENTRY_NODE_v11</title>
+    <title>SENTRY_NODE_v12</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script type="importmap">
         {
@@ -16,24 +16,13 @@
     <style>
         :root { --neon: #00ff41; --bg: #000; }
         body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; color: var(--neon); height: 100%; }
-        
-        #map { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            z-index: 1;
-            filter: invert(100%) hue-rotate(90deg) brightness(0.6) contrast(1.5);
-            mix-blend-mode: screen;
-            opacity: 0.6;
-            background: #000 !important;
-        }
-
+        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; filter: invert(100%) hue-rotate(90deg) brightness(0.6) contrast(1.5); mix-blend-mode: screen; opacity: 0.6; background: #000 !important; }
         #viewport { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; }
         #stats { position: absolute; top: 0; width: 100%; height: 40px; background: rgba(0,0,0,0.9); border-bottom: 1px solid var(--neon); display: flex; justify-content: space-between; align-items: center; padding: 0 20px; box-sizing: border-box; z-index: 1000; }
         #interface { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.85); border-top: 1px solid var(--neon); padding: 15px; box-sizing: border-box; z-index: 1000; backdrop-filter: blur(5px); }
-        
         .btn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-        .btn { background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 10px 2px; text-align: center; font-size: 10px; text-transform: uppercase; cursor: pointer; border-radius: 2px; }
-        .btn:active { background: var(--neon); color: #000; }
-        .active-btn { background: var(--neon) !important; color: #000 !important; box-shadow: 0 0 10px var(--neon); }
+        .btn { background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 10px 2px; text-align: center; font-size: 10px; text-transform: uppercase; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .active-btn { background: var(--neon) !important; color: #000 !important; }
     </style>
 </head>
 <body>
@@ -47,11 +36,11 @@
 </div>
 
 <div id="interface">
-    <div id="log" style="font-size:9px; margin-bottom:5px;">> GEOSPATIAL_SYNC_ACTIVE</div>
+    <div id="log" style="font-size:9px; margin-bottom:5px;">> SYSTEM_STABLE</div>
     <div class="btn-grid">
         <div id="start" class="btn">ACQUIRE</div>
         <div id="stop" class="btn">PLOT</div>
-        <div id="recenter" class="btn" style="color: #fff; border-color: #fff;">RE-CENTER</div>
+        <div id="recenter" class="btn" style="background: #222; border-color: #fff; color: #fff;">RE-CENTER</div>
         <div id="toggleMap" class="btn">MAP_OFF</div>
         <div id="save" class="btn">SAVE</div>
         <div id="clear" class="btn" style="border-color:#ff3e3e">CLEAR</div>
@@ -69,7 +58,8 @@
     function init() {
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 100000);
-        
+        camera.position.set(0, 500, 500);
+
         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setClearColor(0x000000, 0);
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -77,51 +67,53 @@
 
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        
+        // Save initial state for reset
+        controls.saveState();
+
         const grid = new THREE.GridHelper(10000, 50, 0x00ff41, 0x002200);
         grid.material.opacity = 0.2;
         grid.material.transparent = true;
         scene.add(grid);
 
-        // LEAFLET SETUP
         lMap = L.map('map', { 
-            zoomControl: false, 
-            attributionControl: false,
-            dragging: false, 
-            scrollWheelZoom: false,
-            doubleClickZoom: false
+            zoomControl: false, attributionControl: false,
+            dragging: false, scrollWheelZoom: false, doubleClickZoom: false
         }).setView([0, 0], 2);
-        
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(lMap);
 
-        // SYNC LOGIC: Map pans when Camera pans
+        // SYNC MECHANISM
         controls.addEventListener('change', () => {
             if (!origin) return;
-            
-            // 1. Zoom Sync: Map zoom scales with Camera height (Y)
             const zoomBase = 18;
             const newZoom = Math.max(1, zoomBase - Math.log2(camera.position.y / 100));
             lMap.setZoom(newZoom, { animate: false });
-
-            // 2. Pan Sync: Map pans based on Camera X/Z (converted back to Lat/Lng)
             const lngOffset = camera.position.x / (111320 * Math.cos(origin.lat * Math.PI / 180));
             const latOffset = -camera.position.z / 111320;
             lMap.panTo([origin.lat + latOffset, origin.lng + lngOffset], { animate: false });
         });
 
-        // RE-CENTER BUTTON
+        // RE-CENTER FIX: Manual override
         document.getElementById('recenter').onclick = () => {
-            controls.reset();
+            // Force 3D reset
+            controls.reset(); 
             camera.position.set(0, 500, 500);
-            if(origin) lMap.setView([origin.lat, origin.lng], 17);
-            document.getElementById('log').innerText = "> CAM_RESET_TO_ANCHOR";
+            controls.target.set(0, 0, 0);
+            controls.update();
+
+            // Force Map reset
+            if (origin) {
+                lMap.setView([origin.lat, origin.lng], 18, { animate: true });
+                document.getElementById('log').innerText = "> RE-CENTERED_TO_ANCHOR";
+            } else {
+                document.getElementById('log').innerText = "> ERR: NO_ANCHOR_FOUND";
+            }
         };
 
         document.getElementById('toggleMap').onclick = (e) => {
             const m = document.getElementById('map');
-            const hidden = m.style.visibility === 'hidden';
-            m.style.visibility = hidden ? 'visible' : 'hidden';
-            e.target.innerText = hidden ? "MAP_ON" : "MAP_OFF";
+            const isVisible = m.style.display !== 'none';
+            m.style.display = isVisible ? 'none' : 'block';
+            e.target.innerText = isVisible ? "MAP_OFF" : "MAP_ON";
             e.target.classList.toggle('active-btn');
         };
 
@@ -132,11 +124,12 @@
                 const node = { t: Date.now(), lat: p.coords.latitude, lng: p.coords.longitude, alt: p.coords.altitude || 0, id: "LIVE" };
                 currentTrace.push(node);
                 document.getElementById('count').innerText = currentTrace.length;
-                // STAGE 0,0,0 ANCHOR: First point captured becomes the world origin
                 if (!origin) {
                     origin = { lat: node.lat, lng: node.lng };
                     lMap.setView([origin.lat, origin.lng], 18);
                     document.getElementById('log').innerText = `> ANCHOR_SET: ${origin.lat.toFixed(4)}`;
+                    // Re-save state now that we have an anchor
+                    controls.saveState();
                 }
             }, null, { enableHighAccuracy: true });
         };
@@ -152,8 +145,6 @@
         };
 
         document.getElementById('clear').onclick = () => location.reload();
-        
-        camera.position.set(0, 500, 500);
         animate();
     }
 
@@ -161,23 +152,15 @@
         const threePoints = [];
         const leafPoints = [];
         const group = new THREE.Group();
-        const nodeMat = new THREE.MeshBasicMaterial({ color: color });
-        const nodeGeo = new THREE.SphereGeometry(2, 8, 8);
-
         data.forEach(d => {
-            // Anchor-relative projection
             const x = (d.lng - origin.lng) * 111320 * Math.cos(origin.lat * Math.PI / 180);
             const z = (origin.lat - d.lat) * 111320;
-            const y = d.alt;
-
-            threePoints.push(new THREE.Vector3(x, y, z));
+            threePoints.push(new THREE.Vector3(x, d.alt, z));
             leafPoints.push([d.lat, d.lng]);
-            
-            const m = new THREE.Mesh(nodeGeo, nodeMat);
-            m.position.set(x, y, z);
+            const m = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), new THREE.MeshBasicMaterial({ color }));
+            m.position.set(x, d.alt, z);
             group.add(m);
         });
-
         const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(threePoints), new THREE.LineBasicMaterial({ color }));
         group.add(line);
         scene.add(group);
