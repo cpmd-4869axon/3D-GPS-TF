@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MS-PRECISION LOGGER</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: 'Courier New', monospace; background: #000; color: #0f0; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        #header { background: #111; padding: 15px; border-bottom: 2px solid #0f0; display: flex; justify-content: space-between; z-index: 1000; }
+        #map { flex: 1; width: 100%; filter: invert(100%) hue-rotate(180deg) brightness(95%); }
+        #console { height: 120px; background: #050505; border-top: 1px solid #333; padding: 10px; overflow-y: auto; font-size: 10px; color: #0f0; }
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 15px; background: #111; }
+        button { padding: 20px; font-weight: bold; border: 1px solid #0f0; background: transparent; color: #0f0; cursor: pointer; }
+        #start-btn.active { background: #0f0; color: #000; }
+        #stop-btn { border-color: #f00; color: #f00; }
+        button:disabled { opacity: 0.3; }
+        .val { color: #fff; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <div>STATUS: <span id="status" class="val">READY</span></div>
+        <div>RECORDS: <span id="count" class="val">0</span></div>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="console">> INITIALIZING SENSORS...</div>
+
+    <div class="controls">
+        <button id="start-btn">BEGIN CAPTURE</button>
+        <button id="stop-btn" disabled>STOP & DOWNLOAD</button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let map, path, logInterval, currentPos = { lat: 0, lng: 0, acc: 0, alt: 0 };
+        let csvRows = ["timestamp_ms,iso_8601,latitude,longitude,accuracy_m,altitude_m"];
+        const logBox = document.getElementById('console');
+
+        // Initialize Map
+        map = L.map('map', { zoomControl: false, attributionControl: false }).setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        path = L.polyline([], { color: '#0f0', weight: 2 }).addTo(map);
+
+        function addLog(msg) {
+            const line = document.createElement('div');
+            line.textContent = `[${new Date().toISOString().split('T')[1].slice(0,-1)}] > ${msg}`;
+            logBox.appendChild(line);
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        // Global watcher to feed the interval the latest hardware data
+        navigator.geolocation.watchPosition((p) => {
+            currentPos = {
+                lat: p.coords.latitude,
+                lng: p.coords.longitude,
+                acc: p.coords.accuracy,
+                alt: p.coords.altitude || 0
+            };
+        }, (err) => addLog("GPS ERR: " + err.message), { 
+            enableHighAccuracy: true, 
+            maximumAge: 0 
+        });
+
+        document.getElementById('start-btn').onclick = function() {
+            this.disabled = true;
+            this.classList.add('active');
+            document.getElementById('stop-btn').disabled = false;
+            document.getElementById('status').innerText = "RECORDING";
+            addLog("HIGH-FREQUENCY POLLING STARTED (1ms INTERVAL)");
+
+            // The loop: Captures data at the millisecond level
+            logInterval = setInterval(() => {
+                if (currentPos.lat !== 0) {
+                    const now = new Date();
+                    const msTimestamp = now.getTime();
+                    const isoTime = now.toISOString();
+
+                    // Create CSV Row
+                    const row = `${msTimestamp},${isoTime},${currentPos.lat},${currentPos.lng},${currentPos.acc},${currentPos.alt}`;
+                    csvRows.push(row);
+
+                    // Update Counter (throttled visually for performance)
+                    if (csvRows.length % 50 === 0) {
+                        document.getElementById('count').innerText = csvRows.length - 1;
+                        path.addLatLng([currentPos.lat, currentPos.lng]);
+                        map.panTo([currentPos.lat, currentPos.lng]);
+                    }
+                }
+            }, 1); // 1ms target interval
+        };
+
+        document.getElementById('stop-btn').onclick = function() {
+            clearInterval(logInterval);
+            this.disabled = true;
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('start-btn').classList.remove('active');
+            document.getElementById('status').innerText = "SAVED";
+
+            const csvString = csvRows.join("\n");
+            const blob = new Blob([csvString], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `SENSORDATA_${Date.now()}.csv`;
+            link.click();
+            
+            addLog(`CAPTURE ENDED. ${csvRows.length - 1} POINTS SAVED.`);
+            csvRows = ["timestamp_ms,iso_8601,latitude,longitude,accuracy_m,altitude_m"]; // Reset
+        };
+    </script>
+</body>
+</html>
