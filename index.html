@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sentry Hub - Execution Fix</title>
+    <title>Sentry Hub - Final Execution</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -12,40 +12,62 @@
         :root { --neon: #00ff41; --bg: #050505; --alert: #ff3e3e; }
         body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; height: 100%; color: var(--neon); }
         
-        /* Ensure UI is always on top */
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 9999; }
-        .interactive { pointer-events: auto !important; }
+        /* THE FIX: Highest priority UI Layer */
+        #master-ui {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 99999; pointer-events: none; /* Allow 3D interaction through the empty space */
+        }
+        .touch-enabled { pointer-events: auto !important; }
 
-        #header { height: 40px; background: rgba(0,0,0,0.9); border-bottom: 2px solid var(--neon); display: flex; justify-content: space-between; align-items: center; padding: 0 20px; box-sizing: border-box; }
-        #container { display: flex; flex-direction: column; height: calc(100vh - 40px); }
-        #map-view { flex: 1; opacity: 0.3; filter: grayscale(100%) invert(100%); }
-        #three-view { flex: 2; background: #000; position: relative; }
+        #header { height: 45px; background: rgba(0,0,0,0.9); border-bottom: 2px solid var(--neon); display: flex; justify-content: space-between; align-items: center; padding: 0 15px; box-sizing: border-box; }
+        
+        #panel {
+            position: absolute; bottom: 25px; left: 15px; right: 15px;
+            background: rgba(0,0,0,0.95); padding: 15px; border: 1px solid var(--neon);
+            box-shadow: 0 0 15px rgba(0,255,65,0.2);
+        }
+        
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+        
+        /* Heavy-duty mobile buttons */
+        .btn-core {
+            background: #000; border: 1px solid var(--neon); color: var(--neon);
+            padding: 18px 5px; text-align: center; font-size: 13px; font-weight: bold;
+            text-transform: uppercase; display: block;
+        }
+        .btn-core:active { background: var(--neon); color: #000; scale: 0.98; }
+        .scanning { border-color: var(--alert) !important; color: var(--alert) !important; animation: pulse 1.5s infinite; }
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        #container { display: flex; flex-direction: column; height: 100vh; }
+        #map-view { flex: 1; opacity: 0.25; filter: grayscale(100%) invert(100%); }
+        #three-view { flex: 2; background: #000; }
         #three-canvas { width: 100%; height: 100%; display: block; }
-
-        #controls-panel { position: absolute; bottom: 20px; left: 15px; right: 15px; background: rgba(0,0,0,0.95); padding: 15px; border: 1px solid var(--neon); border-left: 5px solid var(--neon); }
-        .grid-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-        .btn { background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 15px; text-align: center; font-size: 12px; font-weight: bold; text-transform: uppercase; }
-        .btn:active { background: var(--neon); color: #000; }
-        #start-btn.active { border-color: var(--alert); color: var(--alert); box-shadow: 0 0 10px var(--alert); }
-        input[type="file"] { display: none; }
-        #log { font-size: 10px; margin-bottom: 5px; min-height: 1.2em; }
+        
+        #layer-legend {
+            position: absolute; top: 60px; right: 15px; background: rgba(0,0,0,0.8);
+            padding: 8px; border: 1px solid var(--neon); font-size: 10px; display: none;
+        }
     </style>
 </head>
 <body>
 
-<div id="ui-layer">
+<div id="master-ui">
     <div id="header">
-        <div class="stat">MODE: <span id="sys-status">STANDBY</span></div>
-        <div class="stat">NODES: <span id="node-count">0</span></div>
+        <div>MODE: <span id="sys-status">READY</span></div>
+        <div>NODES: <span id="node-count">0</span></div>
     </div>
 
-    <div id="controls-panel" class="interactive">
-        <div id="log">> SYSTEM INITIALIZED</div>
-        <div class="grid-btns">
-            <div id="start-btn" class="btn">ACQUIRE GPS</div>
-            <div id="stop-btn" class="btn">STOP & EXPORT</div>
-            <label class="btn">IMPORT CSV <input type="file" id="csv-in" multiple></label>
-            <div id="reset-btn" class="btn">RESET</div>
+    <div id="layer-legend" class="touch-enabled"></div>
+
+    <div id="panel" class="touch-enabled">
+        <div id="log" style="font-size: 11px;">> STANDBY_</div>
+        <div class="grid">
+            <div id="btn-gps" class="btn-core">ACQUIRE GPS</div>
+            <div id="btn-save" class="btn-core">STOP & EXPORT</div>
+            <label class="btn-core">IMPORT CSV <input type="file" id="csv-in" multiple></label>
+            <div id="btn-reset" class="btn-core">RESET</div>
         </div>
     </div>
 </div>
@@ -57,92 +79,101 @@
 
 <script>
     let scene, camera, renderer, map, controls, origin = null, dataBuffer = [], watchID = null;
+    const colors = ['#00ff41', '#00f2ff', '#ff00ea', '#fff200', '#ff3e3e'];
+    let layerIdx = 0;
 
     function init() {
-        // Map (Background)
-        map = L.map('map-view', { zoomControl: false, attributionControl: false, dragging: false, touchZoom: false }).setView([0,0], 2);
+        // Map Setup
+        map = L.map('map-view', { zoomControl: false, dragging: false, touchZoom: false }).setView([0,0], 2);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-        // Three.js
+        // Three.js Setup
         const canvas = document.getElementById('three-canvas');
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 10000);
-        camera.position.set(30, 30, 30);
+        camera.position.set(40, 40, 40);
 
         renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 
         controls = new THREE.OrbitControls(camera, renderer.domElement);
-        scene.add(new THREE.GridHelper(500, 50, 0x00ff41, 0x222222));
+        scene.add(new THREE.GridHelper(500, 50, 0x00ff41, 0x111111));
 
-        // Direct Execution Listeners
-        const bind = (id, fn) => {
-            const el = document.getElementById(id);
-            el.addEventListener('click', (e) => { e.preventDefault(); fn(); });
-            el.addEventListener('touchstart', (e) => { e.preventDefault(); fn(); }, {passive: false});
-        };
-
-        bind('start-btn', toggleGPS);
-        bind('stop-btn', exportData);
-        bind('reset-btn', () => location.reload());
-        document.getElementById('csv-in').addEventListener('change', handleImport);
+        // EVENT BINDING: Using direct function calls
+        document.getElementById('btn-gps').onclick = startGPS;
+        document.getElementById('btn-save').onclick = exportCSV;
+        document.getElementById('btn-reset').onclick = () => location.reload();
+        document.getElementById('csv-in').onchange = handleFiles;
 
         animate();
     }
 
-    function toggleGPS() {
+    function startGPS() {
         if (watchID) {
             navigator.geolocation.clearWatch(watchID);
             watchID = null;
-            document.getElementById('start-btn').classList.remove('active');
-            updateLog("> SENSOR DISCONNECTED");
-        } else {
-            document.getElementById('start-btn').classList.add('active');
-            updateLog("> SEARCHING FOR SATELLITES...");
-            watchID = navigator.geolocation.watchPosition(p => {
-                updateLog(`> LOCK: ${p.coords.latitude.toFixed(5)}`);
-                processPoint(p.coords.latitude, p.coords.longitude, p.coords.altitude || 0);
-            }, e => updateLog(`> ERR: ${e.message}`), { enableHighAccuracy: true });
+            document.getElementById('btn-gps').classList.remove('scanning');
+            document.getElementById('sys-status').innerText = "PAUSED";
+            return;
         }
+
+        document.getElementById('btn-gps').classList.add('scanning');
+        document.getElementById('log').innerText = "> SEARCHING...";
+        
+        watchID = navigator.geolocation.watchPosition(p => {
+            const { latitude, longitude, altitude } = p.coords;
+            document.getElementById('log').innerText = `> LOCK: ${latitude.toFixed(5)}`;
+            document.getElementById('sys-status').innerText = "ACTIVE";
+            addPoint(latitude, longitude, altitude || 0, colors[0], "LIVE");
+        }, e => alert(e.message), { enableHighAccuracy: true });
     }
 
-    function processPoint(lat, lng, alt) {
+    function addPoint(lat, lng, alt, color, source) {
         if (!origin) origin = { lat, lng };
         const x = (lng - origin.lng) * 111320 * Math.cos(lat * Math.PI / 180);
         const z = (origin.lat - lat) * 111320;
-        
-        const dot = new THREE.Mesh(new THREE.SphereGeometry(0.5), new THREE.MeshBasicMaterial({ color: 0x00ff41 }));
+
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(0.7), new THREE.MeshBasicMaterial({ color }));
         dot.position.set(x, alt, z);
         scene.add(dot);
 
-        dataBuffer.push({ lat, lng, alt, x, z });
+        dataBuffer.push({ lat, lng, alt, source });
         document.getElementById('node-count').innerText = dataBuffer.length;
     }
 
-    async function handleImport(e) {
-        updateLog("> PROCESSING FILES...");
+    async function handleFiles(e) {
         const files = Array.from(e.target.files);
-        for (let f of files) {
-            const text = await f.text();
+        document.getElementById('layer-legend').style.display = 'block';
+        
+        for (let file of files) {
+            layerIdx++;
+            const color = colors[layerIdx % colors.length];
+            const legendItem = document.createElement('div');
+            legendItem.innerHTML = `<span style="color:${color}">■</span> ${file.name}`;
+            document.getElementById('layer-legend').appendChild(legendItem);
+
+            const text = await file.text();
             text.split('\n').slice(1).forEach(line => {
                 const p = line.split(',');
-                if (p.length >= 3) processPoint(parseFloat(p[1]), parseFloat(p[2]), parseFloat(p[3]||0));
+                if (p.length >= 3) addPoint(parseFloat(p[1]), parseFloat(p[2]), parseFloat(p[3]||0), color, file.name);
             });
         }
     }
 
-    function exportData() {
-        if (dataBuffer.length === 0) return updateLog("> NO DATA TO EXPORT");
-        const csv = "Time,Lat,Lng,Alt,X,Z\n" + dataBuffer.map(d => `${Date.now()},${d.lat},${d.lng},${d.alt},${d.x},${d.z}`).join("\n");
-        const blob = new Blob([csv], { type: 'text/csv' });
+    function exportCSV() {
+        if (dataBuffer.length === 0) return;
+        const csv = "Time,Lat,Lng,Alt,Source\n" + dataBuffer.map(d => `${Date.now()},${d.lat},${d.lng},${d.alt},${d.source}`).join("\n");
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = "SCAN_DATA.csv";
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+        a.download = "SENTRY_EXPORT.csv";
         a.click();
     }
 
-    function updateLog(m) { document.getElementById('log').innerText = m; }
-    function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
 
     window.onload = init;
 </script>
