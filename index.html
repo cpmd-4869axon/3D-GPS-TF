@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SENTRY_NODE_v14</title>
+    <title>SENTRY_NODE_v17</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script type="importmap">
         {
@@ -17,31 +17,30 @@
         :root { --neon: #00ff41; --bg: #000; --hold: #ffea00; }
         body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; color: var(--neon); height: 100%; }
         
-        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; filter: invert(100%) hue-rotate(90deg) brightness(0.6) contrast(1.5); mix-blend-mode: screen; opacity: 0.7; pointer-events: none; }
+        #map-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; perspective: 1200px; z-index: 1; pointer-events: none; }
+        #map { width: 100%; height: 100%; filter: invert(100%) hue-rotate(90deg) brightness(0.6) contrast(1.5); mix-blend-mode: screen; opacity: 0.8; transition: transform 0.05s linear; }
+
         #viewport { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; }
-        
         #interface { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.95); border-top: 1px solid var(--neon); padding: 15px; box-sizing: border-box; z-index: 1000; }
         .btn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
         .btn { background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 12px 2px; text-align: center; font-size: 10px; cursor: pointer; text-transform: uppercase; border-radius: 2px; }
-        
-        #log { font-size: 10px; margin-bottom: 8px; color: var(--neon); height: 14px; text-shadow: 0 0 5px var(--neon); }
-        .hold-active { border-color: var(--hold) !important; color: var(--hold) !important; box-shadow: 0 0 10px var(--hold); }
-        .map-active { background: var(--neon) !important; color: #000 !important; }
+        .lock-active { border-color: var(--hold) !important; color: var(--hold) !important; }
+        #log { font-size: 10px; margin-bottom: 8px; color: var(--neon); height: 14px; overflow: hidden; }
     </style>
 </head>
 <body>
 
-<div id="map"></div>
+<div id="map-container"><div id="map"></div></div>
 <div id="viewport"></div>
 
 <div id="interface">
-    <div id="log">> SENTRY_LINK_ESTABLISHED</div>
+    <div id="log">> OMNI_SYNC_STABLE</div>
     <div class="btn-grid">
         <div id="start" class="btn">ACQUIRE</div>
         <div id="stop" class="btn">PLOT</div>
-        <div id="hold" class="btn">HOLD</div>
+        <div id="hold" class="btn">POS_LOCK</div>
         <div id="recenter" class="btn" style="border-color:#fff; color:#fff;">RE-CENTER</div>
-        <div id="toggleMap" class="btn">MAP_ON</div>
+        <div id="save" class="btn" style="color: #00f2ff; border-color: #00f2ff;">SAVE</div>
         <div id="clear" class="btn" style="border-color:#ff3e3e">CLEAR</div>
     </div>
 </div>
@@ -53,12 +52,12 @@
 
     let scene, camera, renderer, controls, origin = null, lMap = null;
     let sessionLog = [], currentTrace = [], watchID = null;
-    let isFrozen = false; 
+    let isPosLocked = false; 
 
     function init() {
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 100000);
-        camera.position.set(0, 800, 0);
+        camera.position.set(0, 800, 400);
 
         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setClearColor(0x000000, 0);
@@ -67,11 +66,9 @@
 
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
-        controls.screenSpacePanning = true;
-
+        
         const grid = new THREE.GridHelper(10000, 50, 0x00ff41, 0x111111);
-        grid.material.transparent = true;
-        grid.material.opacity = 0.2;
+        grid.material.transparent = true; grid.material.opacity = 0.2;
         scene.add(grid);
 
         lMap = L.map('map', { 
@@ -81,107 +78,126 @@
         }).setView([0, 0], 2);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(lMap);
 
-        // SYNC HANDLER
-        controls.addEventListener('change', () => {
-            if (!isFrozen) syncMap();
-        });
+        controls.addEventListener('change', syncOmni);
 
-        // HOLD BUTTON LOGIC
-        document.getElementById('hold').onclick = (e) => {
-            isFrozen = !isFrozen;
-            controls.enabled = !isFrozen; // Disable interaction
-            e.target.innerText = isFrozen ? "RESUME" : "HOLD";
-            e.target.classList.toggle('hold-active', isFrozen);
-            document.getElementById('log').innerText = isFrozen ? "> SYSTEM_STATE: FROZEN" : "> SYSTEM_STATE: ACTIVE";
-        };
-
-        // RE-CENTER LOGIC
-        document.getElementById('recenter').onclick = () => {
-            isFrozen = false; 
-            controls.enabled = true;
-            document.getElementById('hold').innerText = "HOLD";
-            document.getElementById('hold').classList.remove('hold-active');
-            
-            camera.position.set(0, 800, 0);
-            controls.target.set(0, 0, 0);
-            controls.update();
-
-            if (origin) lMap.setView([origin.lat, origin.lng], 18);
-            syncMap();
-            document.getElementById('log').innerText = "> ANCHOR_RE-ESTABLISHED";
-        };
-
-        document.getElementById('toggleMap').onclick = (e) => {
-            const m = document.getElementById('map');
-            const hidden = m.style.display === 'none';
-            m.style.display = hidden ? 'block' : 'none';
-            e.target.innerText = hidden ? "MAP_ON" : "MAP_OFF";
-            e.target.classList.toggle('map-active', hidden);
-        };
-
+        // DATA ACQUISITION
         document.getElementById('start').onclick = () => {
             if (watchID) return;
-            document.getElementById('log').innerText = "> SCANNING_GEOSPATIAL_PLANE...";
+            document.getElementById('log').innerText = "> CAPTURING_GEOSPATIAL_STREAM...";
             watchID = navigator.geolocation.watchPosition(p => {
-                const node = { t: Date.now(), lat: p.coords.latitude, lng: p.coords.longitude, alt: p.coords.altitude || 0 };
+                const node = { 
+                    time: new Date().toISOString(), 
+                    lat: p.coords.latitude, 
+                    lng: p.coords.longitude, 
+                    alt: p.coords.altitude || 0 
+                };
                 currentTrace.push(node);
                 if (!origin) {
                     origin = { lat: node.lat, lng: node.lng };
                     lMap.setView([origin.lat, origin.lng], 18);
-                    document.getElementById('log').innerText = `> ANCHOR: ${origin.lat.toFixed(5)}`;
                 }
-            }, null, { enableHighAccuracy: true });
+            }, (err) => {
+                document.getElementById('log').innerText = "> ERR: GPS_SIGNAL_LOST";
+            }, { enableHighAccuracy: true });
         };
 
         document.getElementById('stop').onclick = () => {
-            navigator.geolocation.clearWatch(watchID); watchID = null;
+            if (!watchID) return;
+            navigator.geolocation.clearWatch(watchID);
+            watchID = null;
             if (currentTrace.length > 0) {
                 renderTrace(currentTrace, '#00ff41');
-                sessionLog = sessionLog.concat(currentTrace);
+                sessionLog = sessionLog.concat(currentTrace); // Save to global session
                 currentTrace = [];
+                document.getElementById('log').innerText = "> DATA_COMMITTED_TO_BUFFER";
             }
+        };
+
+        // EXPORT FIX
+        document.getElementById('save').onclick = () => {
+            if (sessionLog.length === 0 && currentTrace.length === 0) {
+                document.getElementById('log').innerText = "> ERR: NO_DATA_TO_EXPORT";
+                return;
+            }
+            
+            // Combine any uncommitted trace data with the session log
+            const finalData = sessionLog.concat(currentTrace);
+            
+            const csvRows = ["Timestamp,Latitude,Longitude,Altitude"];
+            finalData.forEach(d => {
+                csvRows.push(`${d.time},${d.lat},${d.lng},${d.alt}`);
+            });
+
+            const csvContent = csvRows.join("\n");
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.setAttribute('hidden', '');
+            a.setAttribute('href', url);
+            a.setAttribute('download', `SENTRY_LOG_${Date.now()}.csv`);
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            document.getElementById('log').innerText = "> EXPORT_SUCCESSFUL";
+        };
+
+        document.getElementById('hold').onclick = (e) => {
+            isPosLocked = !isPosLocked;
+            controls.enablePan = !isPosLocked;
+            controls.enableRotate = !isPosLocked;
+            e.target.innerText = isPosLocked ? "RESUME" : "POS_LOCK";
+            e.target.classList.toggle('lock-active', isPosLocked);
+        };
+
+        document.getElementById('recenter').onclick = () => {
+            camera.position.set(0, 800, 400);
+            controls.target.set(0, 0, 0);
+            controls.update();
+            if (origin) lMap.setView([origin.lat, origin.lng], 18);
+            syncOmni();
         };
 
         document.getElementById('clear').onclick = () => location.reload();
         animate();
     }
 
-    function syncMap() {
-        if (!origin || !lMap || isFrozen) return;
-        
+    function syncOmni() {
+        if (!origin || !lMap) return;
         const zoomLevel = 18 - Math.log2(camera.position.y / 150);
         lMap.setZoom(Math.max(2, zoomLevel), { animate: false });
-
-        const latOffset = -camera.position.z / 111320;
-        const lngOffset = camera.position.x / (111320 * Math.cos(origin.lat * Math.PI / 180));
+        const latOffset = -controls.target.z / 111320;
+        const lngOffset = controls.target.x / (111320 * Math.cos(origin.lat * Math.PI / 180));
         lMap.panTo([origin.lat + latOffset, origin.lng + lngOffset], { animate: false });
+
+        const polarAngle = controls.getPolarAngle();
+        const azimuthAngle = controls.getAzimuthalAngle();
+        const mapEl = document.getElementById('map');
+        mapEl.style.transform = `rotateX(${polarAngle * (180 / Math.PI)}deg) rotateZ(${-(azimuthAngle * (180 / Math.PI))}deg) scale(2.5)`;
     }
 
     function renderTrace(data, color) {
-        const threePoints = [];
+        const points = [];
         const leafPoints = [];
         const group = new THREE.Group();
         data.forEach(d => {
             const x = (d.lng - origin.lng) * 111320 * Math.cos(origin.lat * Math.PI / 180);
             const z = (origin.lat - d.lat) * 111320;
-            threePoints.push(new THREE.Vector3(x, d.alt, z));
+            points.push(new THREE.Vector3(x, d.alt, z));
             leafPoints.push([d.lat, d.lng]);
             const m = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), new THREE.MeshBasicMaterial({ color }));
             m.position.set(x, d.alt, z);
             group.add(m);
         });
-        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(threePoints), new THREE.LineBasicMaterial({ color }));
-        group.add(line);
         scene.add(group);
-        L.polyline(leafPoints, { color: '#00ff41', weight: 2, opacity: 0.6 }).addTo(lMap);
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color }));
+        scene.add(line);
+        L.polyline(leafPoints, { color: '#00ff41', weight: 2 }).addTo(lMap);
     }
 
     function animate() {
         requestAnimationFrame(animate);
-        if (!isFrozen) {
-            controls.update();
-            renderer.render(scene, camera);
-        }
+        controls.update();
+        renderer.render(scene, camera);
     }
 
     window.onload = init;
