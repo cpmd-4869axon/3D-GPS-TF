@@ -3,186 +3,128 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sentry Engine v5</title>
+    <title>SENTRY_NODE_v6</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
     <style>
         :root { --neon: #00ff41; --bg: #000; --alert: #ff3e3e; }
         body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; color: var(--neon); height: 100%; }
-        
         #viewport { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-        #stats { position: absolute; top: 0; width: 100%; height: 35px; background: rgba(0,0,0,0.9); border-bottom: 1px solid var(--neon); display: flex; justify-content: space-between; align-items: center; padding: 0 15px; box-sizing: border-box; z-index: 1000; font-size: 12px; }
-
-        #interface { position: absolute; bottom: 0; width: 100%; background: #000; border-top: 1px solid var(--neon); padding: 15px; box-sizing: border-box; z-index: 1000; }
-        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        
-        .btn { background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 18px 5px; text-align: center; font-weight: bold; font-size: 14px; text-transform: uppercase; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+        #interface { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.95); border-top: 1px solid var(--neon); padding: 20px; box-sizing: border-box; z-index: 1000; }
+        #stats { position: absolute; top: 0; width: 100%; height: 40px; background: #000; border-bottom: 1px solid var(--neon); display: flex; justify-content: space-between; align-items: center; padding: 0 20px; box-sizing: border-box; z-index: 1000; font-weight: bold; }
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .btn { background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 20px 5px; text-align: center; font-size: 14px; text-transform: uppercase; cursor: pointer; border-radius: 4px; }
         .btn:active { background: var(--neon); color: #000; }
-        .recording { background: var(--alert) !important; color: #000 !important; border-color: #fff; }
-
-        #log { font-size: 11px; height: 18px; margin-bottom: 8px; border-left: 2px solid var(--neon); padding-left: 10px; }
-        #legend { position: absolute; top: 50px; right: 15px; background: rgba(0,0,0,0.9); border: 1px solid var(--neon); padding: 10px; font-size: 10px; z-index: 1000; display: none; }
-        input[type="file"] { display: none; }
+        .rec { border-color: var(--alert); color: var(--alert); box-shadow: 0 0 15px var(--alert); }
+        #legend { position: absolute; top: 60px; right: 20px; background: rgba(0,0,0,0.9); border: 1px solid var(--neon); padding: 10px; font-size: 11px; z-index: 1000; display: none; }
     </style>
 </head>
 <body>
 
 <div id="stats">
-    <div>SIGNAL: <span id="mode">OFFLINE</span></div>
+    <div>SYS_MODE: <span id="mode">STANDBY</span></div>
     <div>NODES: <span id="count">0</span></div>
 </div>
 
-<div id="legend"><b>LAYERS</b><hr style="border:0.5px solid var(--neon);"><div id="legend-list"></div></div>
-
+<div id="legend"><b>DATA_KEYS</b><hr style="border:0.5px solid var(--neon);"><div id="legend-list"></div></div>
 <div id="viewport"></div>
 
 <div id="interface">
-    <div id="log">SYSTEM_IDLE</div>
+    <div id="log" style="font-size:10px; margin-bottom:10px;">> SYSTEM_INITIALIZED_</div>
     <div class="btn-grid">
-        <div id="btn-start" class="btn">START CAPTURE</div>
-        <div id="btn-stop" class="btn">STOP & PLOT</div>
-        <label class="btn">IMPORT <input type="file" id="file-in" multiple></label>
-        <div id="btn-save" class="btn">EXPORT DATA</div>
+        <div id="start" class="btn">ACQUIRE GPS</div>
+        <div id="stop" class="btn">STOP & PLOT</div>
+        <label class="btn">IMPORT <input type="file" id="file-in" multiple style="display:none;"></label>
+        <div id="save" class="btn">SAVE DATA</div>
     </div>
-    <div id="test-link" style="text-align:center; font-size:9px; margin-top:10px; color:#333;" onclick="runTest()">[ RUN SENSOR TEST ]</div>
 </div>
 
 <script>
     let scene, camera, renderer, controls, origin = null;
-    let masterLog = [], currentRun = [];
+    let sessionLog = [], currentTrace = [];
     let watchID = null;
-    const colors = ['#00ff41', '#00f2ff', '#ff00ea', '#fff200', '#ff3e3e', '#ffffff'];
+    const palette = ['#00ff41', '#00f2ff', '#ff00ea', '#fff200', '#ff3e3e', '#ffffff'];
 
     function init() {
-        const container = document.getElementById('viewport');
         scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 20000);
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 50000);
         camera.position.set(100, 100, 100);
-
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        container.appendChild(renderer.domElement);
-
+        document.getElementById('viewport').appendChild(renderer.domElement);
         controls = new THREE.OrbitControls(camera, renderer.domElement);
-        scene.add(new THREE.GridHelper(2000, 100, 0x00ff41, 0x111111));
+        scene.add(new THREE.GridHelper(5000, 100, 0x00ff41, 0x222222));
 
-        document.getElementById('btn-start').onclick = toggleCapture;
-        document.getElementById('btn-stop').onclick = finalizePlot;
-        document.getElementById('btn-save').onclick = exportData;
-        document.getElementById('file-in').onchange = importFiles;
+        document.getElementById('start').onclick = () => {
+            if (watchID) return;
+            currentTrace = [];
+            document.getElementById('start').classList.add('rec');
+            document.getElementById('mode').innerText = "RECORDING";
+            watchID = navigator.geolocation.watchPosition(p => {
+                const node = { t: Date.now(), lat: p.coords.latitude, lng: p.coords.longitude, alt: p.coords.altitude || 0, id: "LIVE" };
+                currentTrace.push(node);
+                document.getElementById('count').innerText = currentTrace.length;
+            }, null, { enableHighAccuracy: true });
+        };
+
+        document.getElementById('stop').onclick = () => {
+            navigator.geolocation.clearWatch(watchID);
+            watchID = null;
+            document.getElementById('start').classList.remove('rec');
+            document.getElementById('mode').innerText = "PLOTTED";
+            if (currentTrace.length > 0) {
+                renderTrace(currentTrace, palette[0], "LIVE_SCAN");
+                sessionLog = sessionLog.concat(currentTrace);
+            }
+        };
+
+        document.getElementById('file-in').onchange = async (e) => {
+            const files = Array.from(e.target.files);
+            for (let i = 0; i < files.length; i++) {
+                const text = await files[i].text();
+                const color = palette[(i + 1) % palette.length];
+                const rows = text.split('\n').slice(1);
+                const data = rows.map(r => {
+                    const c = r.split(',');
+                    return { lat: parseFloat(c[1]), lng: parseFloat(c[2]), alt: parseFloat(c[3]||0), id: files[i].name };
+                }).filter(d => !isNaN(d.lat));
+                renderTrace(data, color, files[i].name);
+                sessionLog = sessionLog.concat(data);
+            }
+        };
+
+        document.getElementById('save').onclick = () => {
+            const csv = "Time,Lat,Lng,Alt,ID\n" + sessionLog.map(d => `${d.t},${d.lat},${d.lng},${d.alt},${d.id}`).join("\n");
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `SENTRY_${Date.now()}.csv`;
+            a.click();
+        };
 
         animate();
     }
 
-    function toggleCapture() {
-        if (watchID) return;
-        currentRun = [];
-        document.getElementById('btn-start').classList.add('recording');
-        document.getElementById('mode').innerText = "LIVE_ON";
-        document.getElementById('log').innerText = "WAITING_FOR_SATELLITE...";
-
-        watchID = navigator.geolocation.watchPosition(p => {
-            const entry = {
-                t: Date.now(),
-                lat: p.coords.latitude,
-                lng: p.coords.longitude,
-                alt: p.coords.altitude || 0,
-                id: "LIVE"
-            };
-            currentRun.push(entry);
-            document.getElementById('count').innerText = currentRun.length;
-            document.getElementById('log').innerText = `RECV: ${entry.lat.toFixed(4)}, ${entry.lng.toFixed(4)}`;
-        }, e => {
-            document.getElementById('log').innerText = "ERR: " + e.message;
-        }, { enableHighAccuracy: true, maximumAge: 0 });
-    }
-
-    function finalizePlot() {
-        if (watchID) {
-            navigator.geolocation.clearWatch(watchID);
-            watchID = null;
-        }
-        document.getElementById('btn-start').classList.remove('recording');
-        document.getElementById('mode').innerText = "OFFLINE";
-        
-        if (currentRun.length > 0) {
-            plotTo3D(currentRun, colors[0], "MANUAL_SCAN");
-            masterLog = masterLog.concat(currentRun);
-        }
-        document.getElementById('log').innerText = "DATA_PLOTTED_IN_3D";
-    }
-
-    function plotTo3D(data, color, label) {
+    function renderTrace(data, color, label) {
         if (!origin && data.length > 0) origin = { lat: data[0].lat, lng: data[0].lng };
-        
         const group = new THREE.Group();
         const mat = new THREE.MeshBasicMaterial({ color: color });
-        const geo = new THREE.SphereGeometry(1, 8, 8);
-
+        const geo = new THREE.SphereGeometry(1.2, 8, 8);
         data.forEach(d => {
             const x = (d.lng - origin.lng) * 111320 * Math.cos(d.lat * Math.PI / 180);
             const z = (origin.lat - d.lat) * 111320;
-            const mesh = new THREE.Mesh(geo, mat);
-            mesh.position.set(x, d.alt, z);
-            group.add(mesh);
+            const m = new THREE.Mesh(geo, mat);
+            m.position.set(x, d.alt, z);
+            group.add(m);
         });
         scene.add(group);
-        updateLegend(label, color);
-    }
-
-    async function importFiles(e) {
-        const files = Array.from(e.target.files);
-        for (let i = 0; i < files.length; i++) {
-            const text = await files[i].text();
-            const color = colors[(i + 1) % colors.length];
-            const rows = text.split('\n').slice(1);
-            const parsed = rows.map(r => {
-                const c = r.split(',');
-                return { lat: parseFloat(c[1]), lng: parseFloat(c[2]), alt: parseFloat(c[3]||0), id: files[i].name };
-            }).filter(d => !isNaN(d.lat));
-            plotTo3D(parsed, color, files[i].name);
-            masterLog = masterLog.concat(parsed);
-        }
-    }
-
-    function exportData() {
-        if (masterLog.length === 0) return;
-        const csv = "Time,Lat,Lng,Alt,ID\n" + masterLog.map(d => `${d.t},${d.lat},${d.lng},${d.alt},${d.id}`).join("\n");
-        const json = JSON.stringify(masterLog, null, 2);
-        download(csv, "SENTRY_EXPORT.csv", "text/csv");
-        download(json, "SENTRY_EXPORT.json", "application/json");
-    }
-
-    function download(content, name, type) {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([content], { type }));
-        a.download = name;
-        a.click();
-    }
-
-    function updateLegend(name, color) {
         document.getElementById('legend').style.display = 'block';
-        const d = document.createElement('div');
-        d.innerHTML = `<span style="color:${color}">■</span> ${name}`;
-        document.getElementById('legend-list').appendChild(d);
+        const item = document.createElement('div');
+        item.innerHTML = `<span style="color:${color}">■</span> ${label}`;
+        document.getElementById('legend-list').appendChild(item);
     }
 
-    function runTest() {
-        const testData = [];
-        for(let i=0; i<10; i++) {
-            testData.push({lat: 26.1 + (i*0.001), lng: -81.7 + (i*0.001), alt: i*2, id: "TEST"});
-        }
-        plotTo3D(testData, "#fff", "DEBUG_TEST");
-        document.getElementById('log').innerText = "TEST_DATA_INJECTED";
-    }
-
-    function animate() {
-        requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
-    }
-
+    function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
     window.onload = init;
 </script>
 </body>
