@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sentry Hub - 3D Structural Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sentry Hub - Fixed Control</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         :root { --neon: #00ff41; --bg: #050505; --alert: #ff3e3e; }
-        body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; height: 100%; color: var(--neon); }
+        body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; height: 100%; color: var(--neon); touch-action: none; }
         
         #header {
             position: absolute; top: 0; left: 0; width: 100%; height: 40px;
@@ -20,11 +20,10 @@
         }
 
         #container { display: flex; flex-direction: column; height: 100vh; }
-        #map-view { flex: 0.6; opacity: 0.3; filter: grayscale(100%) invert(100%); }
+        #map-view { flex: 0.6; opacity: 0.3; filter: grayscale(100%) invert(100%); pointer-events: none; }
         #three-view { flex: 1.4; background: #000; position: relative; }
-        #three-canvas { width: 100%; height: 100%; display: block; cursor: move; }
+        #three-canvas { width: 100%; height: 100%; display: block; }
 
-        /* Legend with Visibility Toggles */
         #legend {
             position: absolute; top: 50px; right: 20px; z-index: 4000;
             background: rgba(0,0,0,0.8); padding: 10px; border: 1px solid var(--neon);
@@ -32,32 +31,31 @@
         }
         .legend-item { display: flex; align-items: center; margin-bottom: 8px; cursor: pointer; }
         .color-box { width: 12px; height: 12px; margin-right: 8px; border: 1px solid #fff; }
-        .legend-item:hover { background: rgba(0,255,65,0.2); }
 
         #ui {
-            position: absolute; bottom: 20px; left: 20px; z-index: 4000;
+            position: absolute; bottom: 20px; left: 20px; right: 20px; z-index: 4000;
             background: rgba(0,0,0,0.9); padding: 15px; border-left: 4px solid var(--neon);
         }
-        .btns { display: flex; gap: 8px; margin-top: 10px; }
+        .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
         .btn {
             background: transparent; border: 1px solid var(--neon);
-            color: var(--neon); padding: 8px 12px; cursor: pointer;
-            text-transform: uppercase; font-size: 10px; font-weight: bold;
+            color: var(--neon); padding: 12px; cursor: pointer;
+            text-transform: uppercase; font-size: 11px; font-weight: bold;
+            text-align: center;
         }
-        .btn:hover { background: var(--neon); color: black; }
-        .active { background: var(--alert); color: white; border-color: var(--alert); }
+        .btn:active { background: var(--neon); color: black; }
+        .active-mode { background: var(--alert) !important; color: white !important; border-color: var(--alert) !important; }
         input[type="file"] { display: none; }
     </style>
 </head>
 <body>
 
 <div id="header">
-    <div class="stat">SYS_STATE: <span id="sys-status">READY</span></div>
-    <div class="stat">TOTAL_NODES: <span id="node-count">0</span></div>
+    <div class="stat">SYS: <span id="sys-status">READY</span></div>
+    <div class="stat">NODES: <span id="node-count">0</span></div>
 </div>
 
 <div id="legend">
-    <div style="border-bottom: 1px solid var(--neon); margin-bottom: 8px; padding-bottom: 4px;">LAYER_KEY (CLICK TO TOGGLE)</div>
     <div id="legend-list"></div>
 </div>
 
@@ -67,65 +65,73 @@
 </div>
 
 <div id="ui">
-    <div id="log">> STANDBY_</div>
+    <div id="log">> SYSTEM_STANDBY_</div>
     <div class="btns">
-        <button id="start-btn" class="btn">ACQUIRE GPS</button>
-        <button id="stop-btn" class="btn">STOP & EXPORT</button>
+        <div id="start-btn" class="btn">ACQUIRE GPS</div>
+        <div id="stop-btn" class="btn">STOP & EXPORT</div>
         <label class="btn">IMPORT CSV <input type="file" id="csv-in" multiple></label>
-        <button id="reset-btn" class="btn">RESET</button>
+        <div id="reset-btn" class="btn">RESET</div>
     </div>
 </div>
 
-<script type="module">
-    import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.js';
-    import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
-
+<script>
+    // Global Access for standard scripts
     let scene, camera, renderer, map, controls;
     let origin = null, dataBuffer = [], watchID = null;
-    let layers = {}; // Storage for point groups
-
+    let layers = {}; 
     const palette = ['#00ff41', '#00f2ff', '#ff00ea', '#fff200', '#ff3e3e', '#7000ff'];
     let layerCount = 0;
 
     function init() {
-        // Map Setup
+        // Init Map
         map = L.map('map-view', { zoomControl: false, attributionControl: false }).setView([0,0], 2);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-        // Three.js Setup
+        // Init Three.js
         const canvas = document.getElementById('three-canvas');
         scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 20000);
-        camera.position.set(100, 100, 100);
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / (window.innerHeight * 0.7), 0.1, 10000);
+        camera.position.set(50, 50, 50);
 
-        renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+        renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight * 0.7);
 
-        // OrbitControls Integration
-        controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true; 
-        controls.dampingFactor = 0.05;
-        controls.screenSpacePanning = false;
+        // Standard OrbitControls
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
 
-        scene.add(new THREE.GridHelper(2000, 100, 0x00ff41, 0x111111));
+        scene.add(new THREE.GridHelper(1000, 50, 0x00ff41, 0x222222));
 
-        document.getElementById('start-btn').onclick = startLive;
-        document.getElementById('stop-btn').onclick = stopAndSave;
-        document.getElementById('csv-in').onchange = handleImport;
-        document.getElementById('reset-btn').onclick = () => location.reload();
+        // Click Handlers (Using ID directly for speed)
+        document.getElementById('start-btn').addEventListener('click', startLive);
+        document.getElementById('stop-btn').addEventListener('click', stopAndSave);
+        document.getElementById('reset-btn').addEventListener('click', () => location.reload());
+        document.getElementById('csv-in').addEventListener('change', handleImport);
 
         animate();
+        updateLog("> SENSORS INITIALIZED.");
+    }
+
+    function startLive() {
+        if (!navigator.geolocation) return updateLog("> ERR: NO_GPS_HARDWARE");
+        
+        document.getElementById('start-btn').classList.add('active-mode');
+        document.getElementById('sys-status').innerText = "ACTIVE";
+        addLegendItem("LIVE_SCAN", palette[0]);
+
+        watchID = navigator.geolocation.watchPosition((p) => {
+            const { latitude, longitude, altitude } = p.coords;
+            updateLog(`> RECV: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+            processPoint(latitude, longitude, altitude || 0, palette[0], "LIVE_SCAN");
+        }, (err) => updateLog(`> ERR: ${err.message}`), { enableHighAccuracy: true });
     }
 
     function processPoint(lat, lng, alt, color, layerName) {
-        if (!origin) {
-            origin = { lat, lng };
-            map.setView([lat, lng], 19);
-        }
+        if (!origin) origin = { lat, lng };
 
+        // Scale to meters
         const x = (lng - origin.lng) * 111320 * Math.cos(lat * Math.PI / 180);
         const z = (origin.lat - lat) * 111320;
-        const vec = new THREE.Vector3(x, alt, z);
 
         if (!layers[layerName]) {
             layers[layerName] = new THREE.Group();
@@ -133,29 +139,31 @@
         }
 
         const dot = new THREE.Mesh(
-            new THREE.SphereGeometry(1.2, 6, 6),
+            new THREE.SphereGeometry(0.8, 6, 6),
             new THREE.MeshBasicMaterial({ color: color })
         );
-        dot.position.copy(vec);
+        dot.position.set(x, alt, z);
         layers[layerName].add(dot);
 
-        L.circleMarker([lat, lng], { radius: 3, color: color, fillOpacity: 1 }).addTo(map);
         dataBuffer.push({ time: new Date().toISOString(), lat, lng, alt, x, y:alt, z, source: layerName });
         document.getElementById('node-count').innerText = dataBuffer.length;
     }
 
     async function handleImport(e) {
         const files = Array.from(e.target.files);
+        updateLog(`> IMPORTING ${files.length} FILES...`);
+        
         for (let file of files) {
             layerCount++;
             const color = palette[layerCount % palette.length];
-            const name = file.name;
-            addLegendItem(name, color);
+            addLegendItem(file.name, color);
 
             const text = await file.text();
-            text.split('\n').slice(1).forEach(line => {
+            const lines = text.split('\n');
+            lines.forEach((line, i) => {
+                if (i === 0) return; // Skip header
                 const p = line.split(',');
-                if (p.length >= 3) processPoint(parseFloat(p[1]), parseFloat(p[2]), parseFloat(p[3] || 0), color, name);
+                if (p.length >= 3) processPoint(parseFloat(p[1]), parseFloat(p[2]), parseFloat(p[3] || 0), color, file.name);
             });
         }
     }
@@ -173,35 +181,29 @@
         document.getElementById('legend').style.display = 'block';
     }
 
-    function animate() {
-        requestAnimationFrame(animate);
-        controls.update(); // Required for damping
-        renderer.render(scene, camera);
-    }
-
-    // Standard Capture & Save logic...
-    function startLive() {
-        if (!navigator.geolocation) return;
-        document.getElementById('start-btn').classList.add('active');
-        addLegendItem("LIVE_SENTRY", palette[0]);
-        watchID = navigator.geolocation.watchPosition((p) => {
-            processPoint(p.coords.latitude, p.coords.longitude, p.coords.altitude || 0, palette[0], "LIVE_SENTRY");
-        }, null, { enableHighAccuracy: true });
-    }
-
     function stopAndSave() {
         if (watchID) navigator.geolocation.clearWatch(watchID);
-        document.getElementById('start-btn').classList.remove('active');
-        if (dataBuffer.length === 0) return;
-        let csv = "Timestamp,Lat,Lng,Alt,Local_X,Local_Y,Local_Z,Source\n" + 
-                  dataBuffer.map(d => `${d.time},${d.lat},${d.lng},${d.alt},${d.x},${d.y},${d.z},${d.source}`).join("\n");
+        document.getElementById('start-btn').classList.remove('active-mode');
+        if (dataBuffer.length === 0) return updateLog("> ERR: NO_DATA");
+        
+        const csv = "Timestamp,Lat,Lng,Alt,X,Y,Z,Source\n" + 
+                    dataBuffer.map(d => `${d.time},${d.lat},${d.lng},${d.alt},${d.x},${d.y},${d.z},${d.source}`).join("\n");
+        const blob = new Blob([csv], { type: 'text/csv' });
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-        a.download = `SENTRY_SCAN_EXPORT.csv`;
+        a.href = URL.createObjectURL(blob);
+        a.download = `SCAN_${Date.now()}.csv`;
         a.click();
     }
 
-    init();
+    function updateLog(m) { document.getElementById('log').innerText = m; }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if(controls) controls.update();
+        renderer.render(scene, camera);
+    }
+
+    window.onload = init;
 </script>
 </body>
 </html>
