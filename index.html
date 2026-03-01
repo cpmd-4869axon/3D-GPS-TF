@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SENTRY_NODE_v10</title>
+    <title>SENTRY_NODE_v11</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script type="importmap">
         {
@@ -14,38 +14,26 @@
         }
     </script>
     <style>
-        :root { --neon: #00ff41; --bg: #000; --hologram: rgba(0, 255, 65, 0.2); }
-        body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; color: var(--neon); height: 100%; width: 100%; }
+        :root { --neon: #00ff41; --bg: #000; }
+        body, html { margin: 0; padding: 0; overflow: hidden; background: var(--bg); font-family: 'Courier New', monospace; color: var(--neon); height: 100%; }
         
-        /* THE HOLOGRAM LAYER */
         #map { 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
             z-index: 1;
-            /* Invert and colorize to neon green */
-            filter: invert(100%) hue-rotate(90deg) brightness(0.8) contrast(1.2);
-            mix-blend-mode: screen; /* Makes black areas transparent and bright areas glow */
+            filter: invert(100%) hue-rotate(90deg) brightness(0.6) contrast(1.5);
+            mix-blend-mode: screen;
             opacity: 0.6;
-            transition: opacity 0.5s ease;
-            background: transparent !important;
+            background: #000 !important;
         }
 
-        /* Scanline effect for hologram feel */
-        #map::after {
-            content: "";
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 255, 65, 0.1) 50%), 
-                        linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
-            background-size: 100% 4px, 3px 100%;
-            pointer-events: none;
-            z-index: 2;
-        }
-        
-        #viewport { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: auto; }
+        #viewport { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; }
         #stats { position: absolute; top: 0; width: 100%; height: 40px; background: rgba(0,0,0,0.9); border-bottom: 1px solid var(--neon); display: flex; justify-content: space-between; align-items: center; padding: 0 20px; box-sizing: border-box; z-index: 1000; }
-        #interface { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.85); border-top: 1px solid var(--neon); padding: 20px; box-sizing: border-box; z-index: 1000; backdrop-filter: blur(5px); }
+        #interface { position: absolute; bottom: 0; width: 100%; background: rgba(0,0,0,0.85); border-top: 1px solid var(--neon); padding: 15px; box-sizing: border-box; z-index: 1000; backdrop-filter: blur(5px); }
+        
         .btn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-        .btn { background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 12px 2px; text-align: center; font-size: 11px; text-transform: uppercase; cursor: pointer; }
-        .active-btn { background: var(--neon) !important; color: #000 !important; box-shadow: 0 0 15px var(--neon); }
+        .btn { background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 10px 2px; text-align: center; font-size: 10px; text-transform: uppercase; cursor: pointer; border-radius: 2px; }
+        .btn:active { background: var(--neon); color: #000; }
+        .active-btn { background: var(--neon) !important; color: #000 !important; box-shadow: 0 0 10px var(--neon); }
     </style>
 </head>
 <body>
@@ -59,12 +47,12 @@
 </div>
 
 <div id="interface">
-    <div id="log" style="font-size:10px; margin-bottom:5px;">> HOLO_MAP_ENGAGED...</div>
+    <div id="log" style="font-size:9px; margin-bottom:5px;">> GEOSPATIAL_SYNC_ACTIVE</div>
     <div class="btn-grid">
         <div id="start" class="btn">ACQUIRE</div>
         <div id="stop" class="btn">PLOT</div>
+        <div id="recenter" class="btn" style="color: #fff; border-color: #fff;">RE-CENTER</div>
         <div id="toggleMap" class="btn">MAP_OFF</div>
-        <label class="btn">IMPORT <input type="file" id="file-in" multiple style="display:none;"></label>
         <div id="save" class="btn">SAVE</div>
         <div id="clear" class="btn" style="border-color:#ff3e3e">CLEAR</div>
     </div>
@@ -81,33 +69,59 @@
     function init() {
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 100000);
-        camera.position.set(0, 500, 500);
-
+        
         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setClearColor(0x000000, 0); 
+        renderer.setClearColor(0x000000, 0);
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.getElementById('viewport').appendChild(renderer.domElement);
 
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         
-        // Brighter grid for hologram feel
         const grid = new THREE.GridHelper(10000, 50, 0x00ff41, 0x002200);
+        grid.material.opacity = 0.2;
         grid.material.transparent = true;
-        grid.material.opacity = 0.3;
         scene.add(grid);
 
-        // LEAFLET HOLOGRAM SETUP
-        lMap = L.map('map', { zoomControl: false, attributionControl: false }).setView([0, 0], 2);
+        // LEAFLET SETUP
+        lMap = L.map('map', { 
+            zoomControl: false, 
+            attributionControl: false,
+            dragging: false, 
+            scrollWheelZoom: false,
+            doubleClickZoom: false
+        }).setView([0, 0], 2);
         
-        // Use a light-colored base map so that the INVERT filter turns it into a neon dark map
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(lMap);
+
+        // SYNC LOGIC: Map pans when Camera pans
+        controls.addEventListener('change', () => {
+            if (!origin) return;
+            
+            // 1. Zoom Sync: Map zoom scales with Camera height (Y)
+            const zoomBase = 18;
+            const newZoom = Math.max(1, zoomBase - Math.log2(camera.position.y / 100));
+            lMap.setZoom(newZoom, { animate: false });
+
+            // 2. Pan Sync: Map pans based on Camera X/Z (converted back to Lat/Lng)
+            const lngOffset = camera.position.x / (111320 * Math.cos(origin.lat * Math.PI / 180));
+            const latOffset = -camera.position.z / 111320;
+            lMap.panTo([origin.lat + latOffset, origin.lng + lngOffset], { animate: false });
+        });
+
+        // RE-CENTER BUTTON
+        document.getElementById('recenter').onclick = () => {
+            controls.reset();
+            camera.position.set(0, 500, 500);
+            if(origin) lMap.setView([origin.lat, origin.lng], 17);
+            document.getElementById('log').innerText = "> CAM_RESET_TO_ANCHOR";
+        };
 
         document.getElementById('toggleMap').onclick = (e) => {
             const m = document.getElementById('map');
-            const isActive = m.style.opacity === '0.6';
-            m.style.opacity = isActive ? '0' : '0.6';
-            e.target.innerText = isActive ? "MAP_OFF" : "MAP_ON";
+            const hidden = m.style.visibility === 'hidden';
+            m.style.visibility = hidden ? 'visible' : 'hidden';
+            e.target.innerText = hidden ? "MAP_ON" : "MAP_OFF";
             e.target.classList.toggle('active-btn');
         };
 
@@ -118,14 +132,17 @@
                 const node = { t: Date.now(), lat: p.coords.latitude, lng: p.coords.longitude, alt: p.coords.altitude || 0, id: "LIVE" };
                 currentTrace.push(node);
                 document.getElementById('count').innerText = currentTrace.length;
-                if (!origin) lockOrigin(node.lat, node.lng);
+                // STAGE 0,0,0 ANCHOR: First point captured becomes the world origin
+                if (!origin) {
+                    origin = { lat: node.lat, lng: node.lng };
+                    lMap.setView([origin.lat, origin.lng], 18);
+                    document.getElementById('log').innerText = `> ANCHOR_SET: ${origin.lat.toFixed(4)}`;
+                }
             }, null, { enableHighAccuracy: true });
         };
 
         document.getElementById('stop').onclick = () => {
-            if (!watchID) return;
-            navigator.geolocation.clearWatch(watchID);
-            watchID = null;
+            navigator.geolocation.clearWatch(watchID); watchID = null;
             document.getElementById('mode').innerText = "PLOT";
             if (currentTrace.length > 0) {
                 renderTrace(currentTrace, '#00ff41');
@@ -135,17 +152,12 @@
         };
 
         document.getElementById('clear').onclick = () => location.reload();
+        
+        camera.position.set(0, 500, 500);
         animate();
     }
 
-    function lockOrigin(lat, lng) {
-        origin = { lat, lng };
-        lMap.setView([lat, lng], 17);
-        document.getElementById('log').innerText = `> LOC_LOCK: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-    }
-
     function renderTrace(data, color) {
-        if (!origin && data.length > 0) lockOrigin(data[0].lat, data[0].lng);
         const threePoints = [];
         const leafPoints = [];
         const group = new THREE.Group();
@@ -153,24 +165,23 @@
         const nodeGeo = new THREE.SphereGeometry(2, 8, 8);
 
         data.forEach(d => {
+            // Anchor-relative projection
             const x = (d.lng - origin.lng) * 111320 * Math.cos(origin.lat * Math.PI / 180);
             const z = (origin.lat - d.lat) * 111320;
-            threePoints.push(new THREE.Vector3(x, d.alt, z));
+            const y = d.alt;
+
+            threePoints.push(new THREE.Vector3(x, y, z));
             leafPoints.push([d.lat, d.lng]);
+            
             const m = new THREE.Mesh(nodeGeo, nodeMat);
-            m.position.set(x, d.alt, z);
+            m.position.set(x, y, z);
             group.add(m);
         });
 
-        // Add 3D Polyline
-        const lineGeo = new THREE.BufferGeometry().setFromPoints(threePoints);
-        const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: color, linewidth: 2 }));
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(threePoints), new THREE.LineBasicMaterial({ color }));
         group.add(line);
         scene.add(group);
-
-        // Add Leaflet Polyline (Hologram style)
-        L.polyline(leafPoints, { color: '#00ff41', weight: 4, opacity: 0.5, dashArray: '5, 10' }).addTo(lMap);
-        lMap.fitBounds(leafPoints);
+        L.polyline(leafPoints, { color: '#00ff41', weight: 2, opacity: 0.5 }).addTo(lMap);
     }
 
     function animate() {
